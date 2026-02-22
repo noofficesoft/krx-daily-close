@@ -29,8 +29,12 @@ jobs:
 
       - name: Commit and push JSON
         run: |
-          git config user.name "github-actions"
-          git config user.email "noofficesoft@gmail.com"
-          git add krx_close.json
-          git commit -m "Auto update KRX close"
-          git push
+          if [ -f krx_close.json ]; then
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git add krx_close.json
+            git commit -m "Auto update KRX close" || echo "No changes to commit"
+            git push
+          else
+            echo "krx_close.json not generated. Skipping commit."
+          fi
