@@ -1,1 +1,36 @@
-Update KRX Daily Close
+name: Update KRX Daily Close
+
+on:
+  schedule:
+    # 한국시간 18:00 (UTC 09:00)
+    - cron: '0 9 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas requests
+
+      - name: Run KRX script
+        run: |
+          python krx_script.py
+
+      - name: Commit and push JSON
+        run: |
+          git config user.name "github-actions"
+          git config user.email "noofficesoft@gmail.com"
+          git add krx_close.json
+          git commit -m "Auto update KRX close"
+          git push
