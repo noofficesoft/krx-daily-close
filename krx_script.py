@@ -3,60 +3,73 @@ import pandas as pd
 from io import BytesIO
 from datetime import datetime, timedelta
 import json
+import os
 
-def get_target_date():
-    # 오늘이 휴장일일 수 있으므로
-    # 기본은 어제 날짜로 시도
-    return (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+def find_last_trading_day(max_retry=7):
+    today = datetime.now()
+    for i in range(1, max_retry + 1):
+        date = (today - timedelta(days=i)).strftime("%Y%m%d")
+        if fetch_data(date, test_only=True):
+            return date
+    return None
 
-target_date = get_target_date()
+def fetch_data(target_date, test_only=False):
+    otp_url = "http://data.krx.co.kr/comm/fileDn/GenerateOTP/generate.cmd"
+    otp_params = {
+        "mktId": "ALL",
+        "trdDd": target_date,
+        "money": "1",
+        "csvxls_isNo": "false",
+        "name": "fileDown",
+        "url": "dbms/MDC/STAT/standard/MDCSTAT01501"
+    }
 
-otp_url = "http://data.krx.co.kr/comm/fileDn/GenerateOTP/generate.cmd"
+    headers = {
+        "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader",
+        "User-Agent": "Mozilla/5.0"
+    }
 
-otp_params = {
-    "mktId": "ALL",
-    "trdDd": target_date,
-    "money": "1",
-    "csvxls_isNo": "false",
-    "name": "fileDown",
-    "url": "dbms/MDC/STAT/standard/MDCSTAT01501"
-}
+    try:
+        otp_res = requests.post(otp_url, data=otp_params, headers=headers, timeout=10)
+        if otp_res.status_code != 200:
+            return False
 
-headers = {
-    "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader",
-    "User-Agent": "Mozilla/5.0"
-}
+        download_url = "http://data.krx.co.kr/comm/fileDn/download_csv/download.cmd"
+        res = requests.post(download_url, data={"code": otp_res.text}, headers=headers, timeout=10)
 
-otp_res = requests.post(otp_url, data=otp_params, headers=headers)
+        if not res.content or len(res.content) < 100:
+            return False
 
-if otp_res.status_code != 200:
-    raise Exception("OTP request failed")
+        if test_only:
+            return True
 
-otp = otp_res.text
+        df = pd.read_csv(BytesIO(res.content), encoding="euc-kr")
+        df = df[["종목코드", "종가"]]
+        df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
 
-download_url = "http://data.krx.co.kr/comm/fileDn/download_csv/download.cmd"
-res = requests.post(download_url, data={"code": otp}, headers=headers)
+        result = {"date": target_date}
+        for _, row in df.iterrows():
+            result[row["종목코드"]] = int(row["종가"])
 
-# 🔥 응답이 비어있는 경우 처리
-if not res.content or len(res.content) < 100:
-    print("KRX returned empty data. Possibly holiday.")
-    exit(0)
+        with open("krx_close.json", "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
 
-try:
-    df = pd.read_csv(BytesIO(res.content), encoding="euc-kr")
-except Exception as e:
-    print("CSV parsing failed:", e)
-    exit(0)
+        print("KRX JSON updated:", target_date)
+        return True
 
-df = df[["종목코드", "종가"]]
-df["종목코드"] = df["종목코드"].astype(str).str.zfill(6)
+    except Exception as e:
+        print("Error:", e)
+        return False
 
-result = {"date": target_date}
+# ===============================
+# 실행 로직
+# ===============================
 
-for _, row in df.iterrows():
-    result[row["종목코드"]] = int(row["종가"])
+last_trading_day = find_last_trading_day()
 
-with open("krx_close.json", "w", encoding="utf-8") as f:
-    json.dump(result, f, ensure_ascii=False)
-
-print("KRX JSON update completed:", target_date)
+if last_trading_day:
+    success = fetch_data(last_trading_day)
+    if not success:
+        print("Data fetch failed. Keeping previous JSON.")
+else:
+    print("No trading day found in last 7 days. Keeping previous JSON.")
